@@ -33,9 +33,15 @@ export default function Overview({ onNavigate }) {
 
       let carsQuery = supabase
         .from('car_entries')
-        .select('price, commission_amount, entry_date')
+        .select('price, entry_date')
         .eq('store_id', storeId)
       if (from) carsQuery = carsQuery.gte('entry_date', from)
+
+      let commissionsQuery = supabase
+        .from('car_entry_employees')
+        .select('commission_amount, entry_date')
+        .eq('store_id', storeId)
+      if (from) commissionsQuery = commissionsQuery.gte('entry_date', from)
 
       let expensesQuery = supabase
         .from('expense_entries')
@@ -45,12 +51,14 @@ export default function Overview({ onNavigate }) {
 
       const [
         { data: cars },
+        { data: commissionRows },
         { data: expenseRows },
         { data: chartDays },
         { data: items },
         { data: bookings },
       ] = await Promise.all([
         carsQuery,
+        commissionsQuery,
         expensesQuery,
         supabase
           .from('work_days')
@@ -69,7 +77,7 @@ export default function Overview({ onNavigate }) {
       if (!active) return
 
       const revenue = (cars ?? []).reduce((s, c) => s + Number(c.price || 0), 0)
-      const commissions = (cars ?? []).reduce((s, c) => s + Number(c.commission_amount || 0), 0)
+      const commissions = (commissionRows ?? []).reduce((s, c) => s + Number(c.commission_amount || 0), 0)
       const expenses = (expenseRows ?? []).reduce((s, e) => s + Number(e.amount || 0), 0)
 
       setStats({ revenue, cars: (cars ?? []).length, commissions, expenses })

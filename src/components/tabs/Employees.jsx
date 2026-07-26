@@ -212,8 +212,8 @@ function EmployeeDetail({ employee, storeId, onClose }) {
       setLoading(true)
       const from = periodStartDate(period)
       let query = supabase
-        .from('car_entries')
-        .select('*')
+        .from('car_entry_employees')
+        .select('*, car_entries(car_brand, body_type, price)')
         .eq('store_id', storeId)
         .eq('employee_id', employee.id)
         .order('entry_date', { ascending: false })
@@ -230,7 +230,7 @@ function EmployeeDetail({ employee, storeId, onClose }) {
   }, [period, employee.id, storeId])
 
   const totalEarned = entries.reduce((s, e) => s + Number(e.commission_amount || 0), 0)
-  const totalRevenue = entries.reduce((s, e) => s + Number(e.price || 0), 0)
+  const totalRevenue = entries.reduce((s, e) => s + Number(e.car_entries?.price || 0), 0)
   const totalCars = entries.length
 
   return (
@@ -262,9 +262,9 @@ function EmployeeDetail({ employee, storeId, onClose }) {
               <div className="flex items-center gap-2 min-w-0">
                 <CarIcon size={14} className="text-slate-500 shrink-0" />
                 <div className="min-w-0">
-                  <p className="text-sm text-slate-200 truncate">{e.car_brand || e.service}</p>
+                  <p className="text-sm text-slate-200 truncate">{e.car_entries?.car_brand || 'Авто'}</p>
                   <p className="text-[11px] text-slate-500">
-                    {new Date(e.entry_date + 'T00:00:00').toLocaleDateString('uk-UA')} · {e.service}
+                    {new Date(e.entry_date + 'T00:00:00').toLocaleDateString('uk-UA')} · {e.car_entries?.body_type}
                   </p>
                 </div>
               </div>
@@ -272,7 +272,7 @@ function EmployeeDetail({ employee, storeId, onClose }) {
                 <p className="text-sm font-mono text-amber-400 flex items-center gap-1 justify-end whitespace-nowrap">
                   <Wallet size={12} /> {Number(e.commission_amount).toLocaleString('uk-UA')} ₴
                 </p>
-                <p className="text-[11px] text-slate-500 whitespace-nowrap">з {Number(e.price).toLocaleString('uk-UA')} ₴</p>
+                <p className="text-[11px] text-slate-500 whitespace-nowrap">з {Number(e.car_entries?.price || 0).toLocaleString('uk-UA')} ₴</p>
               </div>
             </div>
           ))}

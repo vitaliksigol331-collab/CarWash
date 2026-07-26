@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Plus, Trash2, Car, ChevronLeft, ChevronRight, Tag, Save } from 'lucide-react'
+import { Plus, Trash2, Car, ChevronLeft, ChevronRight, Tag, Save, Check } from 'lucide-react'
 import { supabase } from '../../lib/supabaseClient'
 import { useAuth } from '../../context/AuthContext'
 import { SERVICES, BODY_TYPES } from '../../lib/services'
@@ -9,17 +9,15 @@ import {
 
 const todayISO = () => new Date().toISOString().slice(0, 10)
 
-const emptyForm = {
-  service: SERVICES[0],
-  car_brand: '',
-  body_type: BODY_TYPES[0],
-  price: '',
-  price_note: '',
-  employee_id: '',
-}
-
 const CARPET_SERVICE = 'Мийка килимків'
 const CARPET_RATES = [100, 125, 150]
+
+const emptyForm = {
+  car_brand: '',
+  body_type: BODY_TYPES[0],
+  price_note: '',
+  employee_ids: [],
+}
 
 function priceKey(service, bodyType) {
   return `${service}|${bodyType}`
@@ -35,6 +33,8 @@ export default function WorkDay() {
   const { storeId } = useAuth()
   const [selectedDate, setSelectedDate] = useState(todayISO())
   const [entries, setEntries] = useState([])
+  const [servicesByEntry, setServicesByEntry] = useState({}) // { car_entry_id: [{service, price}] }
+  const [employeesByEntry, setEmployeesByEntry] = useState({}) // { car_entry_id: [{name, percent, amount}] }
   const [employees, setEmployees] = useState([])
   const [history, setHistory] = useState([])
   const [dayExpenses, setDayExpenses] = useState(0)
@@ -43,7 +43,10 @@ export default function WorkDay() {
   const [modalOpen, setModalOpen] = useState(false)
   const [priceModalOpen, setPriceModalOpen] = useState(false)
   const [form, setForm] = useState(emptyForm)
-  const [priceTouched, setPriceTouched] = useState(false)
+
+  // Обрані послуги для нового авто: { [service]: priceString }
+  const [selectedServices, setSelectedServices] = useState({})
+  const [touchedPrices, setTouchedPrices] = useState({}) // { [service]: true } — щоб не перезаписувати ручну ціну
   const [carpetLength, setCarpetLength] = useState('')
   const [carpetWidth, setCarpetWidth] = useState('')
   const [carpetRate, setCarpetRate] = useState(String(CARPET_RATES[0]))
@@ -73,13 +76,29 @@ export default function WorkDay() {
 
   async function loadDay(date) {
     setLoading(true)
-    const [{ data: dayEntries }, { data: expenseRows }, { data: historyRows }] = await Promise.all([
+    const [
+      { data: dayEntries },
+      { data: entryServices },
+      { data: entryEmployees },
+      { data: expenseRows },
+      { data: historyRows },
+    ] = await Promise.all([
       supabase
         .from('car_entries')
         .select('*')
         .eq('store_id', storeId)
         .eq('entry_date', date)
         .order('created_at', { ascending: false }),
+      supabase
+        .from('car_entry_services')
+        .select('car_entry_id, service, price')
+        .eq('store_id', storeId)
+        .eq('entry_date', date),
+      supabase
+        .from('car_entry_employees')
+        .select('car_entry_id, employee_name_snapshot, commission_percent_snapshot, commission_amount')
+        .eq('store_id', storeId)
+        .eq('entry_date', date),
       supabase
         .from('expense_entries')
         .select('amount')
@@ -93,6 +112,21 @@ export default function WorkDay() {
         .limit(14),
     ])
     setEntries(dayEntries ?? [])
+
+    const servicesGrouped = {}
+    ;(entryServices ?? []).forEach((row) => {
+      if (!servicesGrouped[row.car_entry_id]) servicesGrouped[row.car_entry_id] = []
+      servicesGrouped[row.car_entry_id].push(row)
+    })
+    setServicesByEntry(servicesGrouped)
+
+    const employeesGrouped = {}
+    ;(entryEmployees ?? []).forEach((row) => {
+      if (!employeesGrouped[row.car_entry_id]) employeesGrouped[row.car_entry_id] = []
+      employeesGrouped[row.car_entry_id].push(row)
+    })
+    setEmployeesByEntry(employeesGrouped)
+
     setDayExpenses((expenseRows ?? []).reduce((s, r) => s + Number(r.amount || 0), 0))
     setHistory(historyRows ?? [])
     setLoading(false)
@@ -111,10 +145,12 @@ export default function WorkDay() {
 
   const totals = useMemo(() => {
     const revenue = entries.reduce((s, e) => s + Number(e.price || 0), 0)
-    const commissions = entries.reduce((s, e) => s + Number(e.commission_amount || 0), 0)
+    const commissions = Object.values(employeesByEntry)
+      .flat()
+      .reduce((s, row) => s + Number(row.commission_amount || 0), 0)
     const cars = entries.length
     return { revenue, commissions, cars, net: revenue - commissions - dayExpenses }
-  }, [entries, dayExpenses])
+  }, [entries, employeesByEntry, dayExpenses])
 
   const priceFor = (service, bodyType) => {
     const listed = priceList[priceKey(service, bodyType)]
@@ -128,34 +164,54 @@ export default function WorkDay() {
   }
 
   const openAddCar = () => {
-    setForm({ ...emptyForm, price: priceFor(emptyForm.service, emptyForm.body_type) })
-    setPriceTouched(false)
+    setForm(emptyForm)
+    setSelectedServices({})
+    setTouchedPrices({})
     setCarpetLength('')
     setCarpetWidth('')
     setCarpetRate(String(CARPET_RATES[0]))
     setModalOpen(true)
   }
 
-  const handleServiceChange = (newService) => {
-    setForm((f) => {
-      if (newService === CARPET_SERVICE) {
-        return { ...f, service: newService, price: priceTouched ? f.price : '' }
+  const toggleService = (service) => {
+    setSelectedServices((prev) => {
+      const next = { ...prev }
+      if (service in next) {
+        delete next[service]
+        setTouchedPrices((t) => {
+          const nt = { ...t }
+          delete nt[service]
+          return nt
+        })
+        if (service === CARPET_SERVICE) {
+          setCarpetLength('')
+          setCarpetWidth('')
+          setCarpetRate(String(CARPET_RATES[0]))
+        }
+      } else {
+        next[service] = service === CARPET_SERVICE ? '' : priceFor(service, form.body_type)
       }
-      return { ...f, service: newService, price: priceTouched ? f.price : priceFor(newService, f.body_type) }
+      return next
     })
-    if (newService === CARPET_SERVICE) {
-      setCarpetLength('')
-      setCarpetWidth('')
-      setCarpetRate(String(CARPET_RATES[0]))
-    }
+  }
+
+  const handleServicePriceChange = (service, value) => {
+    setTouchedPrices((t) => ({ ...t, [service]: true }))
+    setSelectedServices((prev) => ({ ...prev, [service]: value }))
   }
 
   const handleBodyTypeChange = (newBodyType) => {
-    setForm((f) => ({
-      ...f,
-      body_type: newBodyType,
-      price: (priceTouched || f.service === CARPET_SERVICE) ? f.price : priceFor(f.service, newBodyType),
-    }))
+    setForm((f) => ({ ...f, body_type: newBodyType }))
+    // оновлюємо ціну лише для послуг, які користувач ще не редагував вручну
+    setSelectedServices((prev) => {
+      const next = { ...prev }
+      Object.keys(next).forEach((service) => {
+        if (service !== CARPET_SERVICE && !touchedPrices[service]) {
+          next[service] = priceFor(service, newBodyType)
+        }
+      })
+      return next
+    })
   }
 
   const handleCarpetFieldChange = (field, value) => {
@@ -163,37 +219,93 @@ export default function WorkDay() {
     if (field === 'length') setCarpetLength(value)
     if (field === 'width') setCarpetWidth(value)
     if (field === 'rate') setCarpetRate(value)
-    if (!priceTouched) {
-      setForm((f) => ({ ...f, price: carpetPrice(next.length, next.width, next.rate) }))
+    if (!touchedPrices[CARPET_SERVICE]) {
+      setSelectedServices((prev) => ({ ...prev, [CARPET_SERVICE]: carpetPrice(next.length, next.width, next.rate) }))
     }
   }
 
   const carpetArea = (Number(carpetLength) || 0) * (Number(carpetWidth) || 0)
 
+  const totalPrice = useMemo(
+    () => Object.values(selectedServices).reduce((s, v) => s + (Number(v) || 0), 0),
+    [selectedServices]
+  )
+
+  const toggleEmployee = (id) => {
+    setForm((f) => {
+      const has = f.employee_ids.includes(id)
+      return {
+        ...f,
+        employee_ids: has ? f.employee_ids.filter((x) => x !== id) : [...f.employee_ids, id],
+      }
+    })
+  }
+
   const handleAddCar = async (e) => {
     e.preventDefault()
-    setSaving(true)
-    const chosenEmployee = employees.find((emp) => emp.id === form.employee_id)
-    const { error } = await supabase.from('car_entries').insert({
-      store_id: storeId,
-      entry_date: selectedDate,
-      service: form.service,
-      car_brand: form.car_brand || null,
-      body_type: form.body_type,
-      price: Number(form.price) || 0,
-      price_note: form.price_note || null,
-      employee_id: chosenEmployee?.id || null,
-      employee_name_snapshot: chosenEmployee?.name || null,
-      commission_percent_snapshot: chosenEmployee?.commission_percent || 0,
-    })
-    setSaving(false)
-    if (!error) {
-      setModalOpen(false)
-      setForm(emptyForm)
-      loadDay(selectedDate)
-    } else {
-      alert('Помилка збереження: ' + error.message)
+    const chosenServices = Object.entries(selectedServices)
+    if (chosenServices.length === 0) {
+      alert('Обери хоча б одну послугу')
+      return
     }
+    setSaving(true)
+
+    const { data: inserted, error } = await supabase
+      .from('car_entries')
+      .insert({
+        store_id: storeId,
+        entry_date: selectedDate,
+        service: chosenServices[0][0],
+        car_brand: form.car_brand || null,
+        body_type: form.body_type,
+        price: totalPrice,
+        price_note: form.price_note || null,
+      })
+      .select()
+      .single()
+
+    if (error) {
+      setSaving(false)
+      alert('Помилка збереження: ' + error.message)
+      return
+    }
+
+    const serviceRows = chosenServices.map(([service, price]) => ({
+      store_id: storeId,
+      car_entry_id: inserted.id,
+      entry_date: selectedDate,
+      service,
+      price: Number(price) || 0,
+    }))
+    const { error: servicesError } = await supabase.from('car_entry_services').insert(serviceRows)
+    if (servicesError) {
+      setSaving(false)
+      alert('Помилка збереження послуг: ' + servicesError.message)
+      return
+    }
+
+    if (form.employee_ids.length > 0) {
+      const employeeRows = form.employee_ids.map((empId) => {
+        const emp = employees.find((x) => x.id === empId)
+        return {
+          store_id: storeId,
+          car_entry_id: inserted.id,
+          entry_date: selectedDate,
+          employee_id: emp?.id || null,
+          employee_name_snapshot: emp?.name || null,
+          commission_percent_snapshot: emp?.commission_percent || 0,
+          commission_amount: Number(((totalPrice * (emp?.commission_percent || 0)) / 100).toFixed(2)),
+        }
+      })
+      const { error: empError } = await supabase.from('car_entry_employees').insert(employeeRows)
+      if (empError) {
+        alert('Авто збережено, але не вдалось прив\'язати працівників: ' + empError.message)
+      }
+    }
+
+    setSaving(false)
+    setModalOpen(false)
+    loadDay(selectedDate)
   }
 
   const handleDeleteCar = async (id) => {
@@ -276,7 +388,7 @@ export default function WorkDay() {
         <EmptyState
           icon={Car}
           title="За цей день ще немає жодного авто"
-          subtitle="Додай перше помите авто, вкажи послугу, ціну і, якщо треба, працівника."
+          subtitle="Додай перше помите авто, обери одну чи кілька послуг і, якщо треба, працівників."
           action={
             <Button onClick={openAddCar}>
               <Plus size={16} /> Додати авто
@@ -287,31 +399,45 @@ export default function WorkDay() {
         <div className="mb-6 space-y-3 md:space-y-0">
           {/* Мобільні картки (< md) */}
           <div className="md:hidden space-y-3">
-            {entries.map((e) => (
-              <Card key={e.id} className="flex items-start justify-between gap-3">
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2 flex-wrap">
-                    <p className="text-slate-200 font-medium truncate">{e.car_brand || e.service}</p>
-                    <Badge tone="slate">{e.body_type}</Badge>
-                  </div>
-                  <p className="text-xs text-slate-500 mt-1">{e.service}</p>
-                  <div className="flex items-center gap-3 mt-2 text-sm">
-                    <span className="font-mono text-foam-400 font-semibold">
-                      {Number(e.price).toLocaleString('uk-UA')} ₴
-                    </span>
-                    {e.employee_name_snapshot && (
-                      <span className="font-mono text-amber-400 text-xs">
-                        {e.employee_name_snapshot}: {Number(e.commission_amount).toLocaleString('uk-UA')} ₴
+            {entries.map((e) => {
+              const empRows = employeesByEntry[e.id] || []
+              const svcRows = servicesByEntry[e.id] || []
+              return (
+                <Card key={e.id} className="flex items-start justify-between gap-3">
+                  <div className="min-w-0 flex-1">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <p className="text-slate-200 font-medium truncate">{e.car_brand || svcRows[0]?.service || e.service}</p>
+                      <Badge tone="slate">{e.body_type}</Badge>
+                    </div>
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {svcRows.map((s, i) => (
+                        <span key={i} className="text-xs text-slate-500">
+                          {s.service} ({Number(s.price).toLocaleString('uk-UA')} ₴){i < svcRows.length - 1 ? ',' : ''}
+                        </span>
+                      ))}
+                    </div>
+                    <div className="flex items-center gap-3 mt-2 text-sm">
+                      <span className="font-mono text-foam-400 font-semibold">
+                        {Number(e.price).toLocaleString('uk-UA')} ₴ разом
                       </span>
+                    </div>
+                    {empRows.length > 0 && (
+                      <div className="flex flex-wrap gap-1.5 mt-2">
+                        {empRows.map((row, i) => (
+                          <span key={i} className="text-[11px] font-mono text-amber-400 bg-amber-400/10 rounded-md px-1.5 py-0.5">
+                            {row.employee_name_snapshot}: {Number(row.commission_amount).toLocaleString('uk-UA')} ₴
+                          </span>
+                        ))}
+                      </div>
                     )}
+                    {e.price_note && <p className="text-xs text-slate-500 italic mt-1">{e.price_note}</p>}
                   </div>
-                  {e.price_note && <p className="text-xs text-slate-500 italic mt-1">{e.price_note}</p>}
-                </div>
-                <button onClick={() => handleDeleteCar(e.id)} className="text-slate-500 hover:text-coral-400 shrink-0">
-                  <Trash2 size={16} />
-                </button>
-              </Card>
-            ))}
+                  <button onClick={() => handleDeleteCar(e.id)} className="text-slate-500 hover:text-coral-400 shrink-0">
+                    <Trash2 size={16} />
+                  </button>
+                </Card>
+              )
+            })}
           </div>
 
           {/* Таблиця (>= md) */}
@@ -321,38 +447,57 @@ export default function WorkDay() {
                 <thead>
                   <tr className="text-left text-xs text-slate-500 border-b border-ink-700">
                     <th className="px-5 py-3 font-medium">Авто</th>
-                    <th className="px-5 py-3 font-medium">Послуга</th>
-                    <th className="px-5 py-3 font-medium">Ціна</th>
-                    <th className="px-5 py-3 font-medium">Працівник</th>
-                    <th className="px-5 py-3 font-medium">Виплата</th>
+                    <th className="px-5 py-3 font-medium">Послуги</th>
+                    <th className="px-5 py-3 font-medium">Разом</th>
+                    <th className="px-5 py-3 font-medium">Працівники</th>
                     <th className="px-5 py-3 font-medium"></th>
                   </tr>
                 </thead>
                 <tbody>
-                  {entries.map((e) => (
-                    <tr key={e.id} className="border-b border-ink-700/60 last:border-0 hover:bg-ink-700/30">
-                      <td className="px-5 py-3 text-slate-200">
-                        {e.car_brand || '—'}
-                        <div className="mt-0.5"><Badge tone="slate">{e.body_type}</Badge></div>
-                      </td>
-                      <td className="px-5 py-3 text-slate-400">{e.service}</td>
-                      <td className="px-5 py-3 font-mono text-foam-400 font-semibold">
-                        {Number(e.price).toLocaleString('uk-UA')} ₴
-                        {e.price_note && <div className="text-[11px] text-slate-500 italic font-sans">{e.price_note}</div>}
-                      </td>
-                      <td className="px-5 py-3 text-slate-300">{e.employee_name_snapshot || '—'}</td>
-                      <td className="px-5 py-3 font-mono text-amber-400">
-                        {e.employee_name_snapshot
-                          ? `${Number(e.commission_amount).toLocaleString('uk-UA')} ₴ (${e.commission_percent_snapshot}%)`
-                          : '—'}
-                      </td>
-                      <td className="px-5 py-3 text-right">
-                        <button onClick={() => handleDeleteCar(e.id)} className="text-slate-500 hover:text-coral-400">
-                          <Trash2 size={16} />
-                        </button>
-                      </td>
-                    </tr>
-                  ))}
+                  {entries.map((e) => {
+                    const empRows = employeesByEntry[e.id] || []
+                    const svcRows = servicesByEntry[e.id] || []
+                    return (
+                      <tr key={e.id} className="border-b border-ink-700/60 last:border-0 hover:bg-ink-700/30">
+                        <td className="px-5 py-3 text-slate-200">
+                          {e.car_brand || '—'}
+                          <div className="mt-0.5"><Badge tone="slate">{e.body_type}</Badge></div>
+                        </td>
+                        <td className="px-5 py-3 text-slate-400">
+                          <div className="flex flex-col gap-0.5">
+                            {svcRows.map((s, i) => (
+                              <span key={i} className="text-xs whitespace-nowrap">
+                                {s.service} — <span className="text-slate-500">{Number(s.price).toLocaleString('uk-UA')} ₴</span>
+                              </span>
+                            ))}
+                          </div>
+                        </td>
+                        <td className="px-5 py-3 font-mono text-foam-400 font-semibold align-top">
+                          {Number(e.price).toLocaleString('uk-UA')} ₴
+                          {e.price_note && <div className="text-[11px] text-slate-500 italic font-sans">{e.price_note}</div>}
+                        </td>
+                        <td className="px-5 py-3 align-top">
+                          {empRows.length === 0 ? (
+                            <span className="text-slate-500">—</span>
+                          ) : (
+                            <div className="flex flex-col gap-1">
+                              {empRows.map((row, i) => (
+                                <span key={i} className="font-mono text-amber-400 text-xs whitespace-nowrap">
+                                  {row.employee_name_snapshot}: {Number(row.commission_amount).toLocaleString('uk-UA')} ₴
+                                  <span className="text-slate-500"> ({row.commission_percent_snapshot}%)</span>
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </td>
+                        <td className="px-5 py-3 text-right align-top">
+                          <button onClick={() => handleDeleteCar(e.id)} className="text-slate-500 hover:text-coral-400">
+                            <Trash2 size={16} />
+                          </button>
+                        </td>
+                      </tr>
+                    )
+                  })}
                 </tbody>
               </table>
             </div>
@@ -389,94 +534,116 @@ export default function WorkDay() {
       {modalOpen && (
         <Modal title="Нове авто" onClose={() => setModalOpen(false)}>
           <form onSubmit={handleAddCar} className="space-y-4">
+            <Input
+              label="Марка/модель авто (необов'язково)"
+              value={form.car_brand}
+              onChange={(e) => setForm({ ...form, car_brand: e.target.value })}
+              placeholder="Наприклад, Toyota Camry"
+            />
+
             <Select
-              label="Послуга"
-              value={form.service}
-              onChange={(e) => handleServiceChange(e.target.value)}
+              label="Тип кузова"
+              value={form.body_type}
+              onChange={(e) => handleBodyTypeChange(e.target.value)}
             >
-              {SERVICES.map((s) => (
-                <option key={s} value={s}>{s}</option>
+              {BODY_TYPES.map((b) => (
+                <option key={b} value={b}>{b}</option>
               ))}
             </Select>
 
-            {form.service !== CARPET_SERVICE && (
-              <Input
-                label="Марка/модель авто"
-                value={form.car_brand}
-                onChange={(e) => setForm({ ...form, car_brand: e.target.value })}
-                placeholder="Наприклад, Toyota Camry"
-              />
-            )}
+            <div>
+              <span className="block text-xs font-medium text-slate-400 mb-1.5">
+                Послуги (можна обрати кілька)
+              </span>
+              <div className="space-y-2">
+                {SERVICES.map((service) => {
+                  const checked = service in selectedServices
+                  return (
+                    <div key={service}>
+                      <button
+                        type="button"
+                        onClick={() => toggleService(service)}
+                        className={`w-full flex items-center gap-2 rounded-xl border px-3.5 py-2.5 text-sm transition-colors ${
+                          checked
+                            ? 'bg-aqua-400/10 border-aqua-400/40 text-white'
+                            : 'bg-ink-900 border-ink-600 text-slate-300 hover:border-ink-500'
+                        }`}
+                      >
+                        <span className={`w-4 h-4 rounded-md border flex items-center justify-center shrink-0 ${
+                          checked ? 'bg-aqua-400 border-aqua-400' : 'border-ink-500'
+                        }`}>
+                          {checked && <Check size={12} className="text-ink-950" />}
+                        </span>
+                        {service}
+                      </button>
 
-            {form.service !== CARPET_SERVICE && (
-              <Select
-                label="Тип кузова"
-                value={form.body_type}
-                onChange={(e) => handleBodyTypeChange(e.target.value)}
-              >
-                {BODY_TYPES.map((b) => (
-                  <option key={b} value={b}>{b}</option>
-                ))}
-              </Select>
-            )}
+                      {checked && service === CARPET_SERVICE && (
+                        <div className="mt-2 pl-2 border-l-2 border-aqua-400/30 space-y-3">
+                          <div className="grid grid-cols-2 gap-3">
+                            <Input
+                              label="Довжина, м"
+                              type="number"
+                              min="0"
+                              step="0.1"
+                              value={carpetLength}
+                              onChange={(e) => handleCarpetFieldChange('length', e.target.value)}
+                              placeholder="2"
+                            />
+                            <Input
+                              label="Ширина, м"
+                              type="number"
+                              min="0"
+                              step="0.1"
+                              value={carpetWidth}
+                              onChange={(e) => handleCarpetFieldChange('width', e.target.value)}
+                              placeholder="1.5"
+                            />
+                          </div>
+                          <Select
+                            label="Ціна за м²"
+                            value={carpetRate}
+                            onChange={(e) => handleCarpetFieldChange('rate', e.target.value)}
+                          >
+                            {CARPET_RATES.map((r) => (
+                              <option key={r} value={r}>
+                                {r} ₴/м²{r === CARPET_RATES[0] ? ' — звичайні' : r === CARPET_RATES[CARPET_RATES.length - 1] ? ' — дуже брудні' : ' — брудні'}
+                              </option>
+                            ))}
+                          </Select>
+                          {carpetArea > 0 && (
+                            <p className="text-xs text-slate-500">
+                              Площа: {carpetArea.toFixed(2)} м² × {carpetRate} ₴ = <span className="text-foam-400 font-semibold">{selectedServices[CARPET_SERVICE]} ₴</span>
+                            </p>
+                          )}
+                        </div>
+                      )}
 
-            {form.service === CARPET_SERVICE && (
-              <>
-                <div className="grid grid-cols-2 gap-3">
-                  <Input
-                    label="Довжина, м"
-                    type="number"
-                    min="0"
-                    step="0.1"
-                    value={carpetLength}
-                    onChange={(e) => handleCarpetFieldChange('length', e.target.value)}
-                    placeholder="Наприклад, 2"
-                  />
-                  <Input
-                    label="Ширина, м"
-                    type="number"
-                    min="0"
-                    step="0.1"
-                    value={carpetWidth}
-                    onChange={(e) => handleCarpetFieldChange('width', e.target.value)}
-                    placeholder="Наприклад, 1.5"
-                  />
-                </div>
-                <Select
-                  label="Ціна за м² (залежно від забруднення)"
-                  value={carpetRate}
-                  onChange={(e) => handleCarpetFieldChange('rate', e.target.value)}
-                >
-                  {CARPET_RATES.map((r) => (
-                    <option key={r} value={r}>
-                      {r} ₴/м²{r === CARPET_RATES[0] ? ' — звичайні' : r === CARPET_RATES[CARPET_RATES.length - 1] ? ' — дуже брудні' : ' — брудні'}
-                    </option>
-                  ))}
-                </Select>
-                {carpetArea > 0 && (
-                  <p className="text-xs text-slate-500 -mt-2">
-                    Площа: {carpetArea.toFixed(2)} м² × {carpetRate} ₴ = <span className="text-foam-400 font-semibold">{(carpetArea * Number(carpetRate)).toFixed(2)} ₴</span>
-                  </p>
-                )}
-              </>
-            )}
+                      {checked && service !== CARPET_SERVICE && (
+                        <div className="mt-2 pl-2 border-l-2 border-aqua-400/30">
+                          <Input
+                            label={`Ціна за "${service}", ₴`}
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            required
+                            value={selectedServices[service]}
+                            onChange={(e) => handleServicePriceChange(service, e.target.value)}
+                            placeholder="0"
+                          />
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            </div>
 
-            <Input
-              label="Ціна, ₴"
-              type="number"
-              min="0"
-              step="0.01"
-              required
-              value={form.price}
-              onChange={(e) => {
-                setPriceTouched(true)
-                setForm({ ...form, price: e.target.value })
-              }}
-              placeholder="0"
-            />
-            <p className="text-xs text-slate-500 -mt-2">
-              Ціна підставляється з прайс-листа — зміни її вручну для знижки чи надбавки
-            </p>
+            {Object.keys(selectedServices).length > 0 && (
+              <div className="flex items-center justify-between bg-ink-900 border border-ink-600 rounded-xl px-3.5 py-2.5">
+                <span className="text-xs text-slate-400">Загальна ціна</span>
+                <span className="font-mono font-bold text-foam-400">{totalPrice.toLocaleString('uk-UA')} ₴</span>
+              </div>
+            )}
 
             <Textarea
               label="Нотатка до ціни (необов'язково)"
@@ -486,18 +653,49 @@ export default function WorkDay() {
               placeholder="Наприклад: знижка постійному клієнту, дуже брудне авто..."
             />
 
-            <Select
-              label="Працівник (необов'язково)"
-              value={form.employee_id}
-              onChange={(e) => setForm({ ...form, employee_id: e.target.value })}
-            >
-              <option value="">Без працівника</option>
-              {employees.map((emp) => (
-                <option key={emp.id} value={emp.id}>
-                  {emp.name} ({emp.commission_percent}%)
-                </option>
-              ))}
-            </Select>
+            <div>
+              <span className="block text-xs font-medium text-slate-400 mb-1.5">
+                Працівники (можна обрати кількох)
+              </span>
+              {employees.length === 0 ? (
+                <p className="text-xs text-slate-500">
+                  Ще немає жодного працівника — додай у вкладці "Працівники".
+                </p>
+              ) : (
+                <div className="space-y-1.5 max-h-40 overflow-y-auto scrollbar-thin pr-1">
+                  {employees.map((emp) => {
+                    const checked = form.employee_ids.includes(emp.id)
+                    return (
+                      <button
+                        type="button"
+                        key={emp.id}
+                        onClick={() => toggleEmployee(emp.id)}
+                        className={`w-full flex items-center justify-between gap-2 rounded-xl border px-3.5 py-2.5 text-sm transition-colors ${
+                          checked
+                            ? 'bg-aqua-400/10 border-aqua-400/40 text-white'
+                            : 'bg-ink-900 border-ink-600 text-slate-300 hover:border-ink-500'
+                        }`}
+                      >
+                        <span className="flex items-center gap-2">
+                          <span className={`w-4 h-4 rounded-md border flex items-center justify-center shrink-0 ${
+                            checked ? 'bg-aqua-400 border-aqua-400' : 'border-ink-500'
+                          }`}>
+                            {checked && <Check size={12} className="text-ink-950" />}
+                          </span>
+                          {emp.name}
+                        </span>
+                        <span className="text-xs text-slate-500">{emp.commission_percent}%</span>
+                      </button>
+                    )
+                  })}
+                </div>
+              )}
+              {form.employee_ids.length > 1 && (
+                <p className="text-xs text-slate-500 mt-1.5">
+                  Кожен обраний працівник отримає свій % від загальної ціни цього авто.
+                </p>
+              )}
+            </div>
 
             <Button type="submit" disabled={saving} className="w-full">
               {saving ? 'Збереження...' : 'Додати авто'}
