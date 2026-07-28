@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Plus, Trash2, Car, ChevronLeft, ChevronRight, Tag, Save, Check } from 'lucide-react'
+import { Plus, Trash2, Car, ChevronLeft, ChevronRight, ChevronDown, Tag, Save, Check } from 'lucide-react'
 import { supabase } from '../../lib/supabaseClient'
 import { useAuth } from '../../context/AuthContext'
 import { SERVICES, BODY_TYPES } from '../../lib/services'
@@ -50,6 +50,8 @@ export default function WorkDay() {
   const [carpetLength, setCarpetLength] = useState('')
   const [carpetWidth, setCarpetWidth] = useState('')
   const [carpetRate, setCarpetRate] = useState(String(CARPET_RATES[0]))
+  const [servicesPickerOpen, setServicesPickerOpen] = useState(false)
+  const [employeesPickerOpen, setEmployeesPickerOpen] = useState(false)
   const [saving, setSaving] = useState(false)
 
   async function loadEmployees() {
@@ -170,6 +172,8 @@ export default function WorkDay() {
     setCarpetLength('')
     setCarpetWidth('')
     setCarpetRate(String(CARPET_RATES[0]))
+    setServicesPickerOpen(false)
+    setEmployeesPickerOpen(false)
     setModalOpen(true)
   }
 
@@ -553,15 +557,29 @@ export default function WorkDay() {
 
             <div>
               <span className="block text-xs font-medium text-slate-400 mb-1.5">
-                Послуги (можна обрати кілька)
+                Послуги
               </span>
-              <div className="space-y-2">
-                {SERVICES.map((service) => {
-                  const checked = service in selectedServices
-                  return (
-                    <div key={service}>
+              <button
+                type="button"
+                onClick={() => setServicesPickerOpen((v) => !v)}
+                className="w-full flex items-center justify-between gap-2 bg-ink-900 border border-ink-600 rounded-xl px-3.5 py-2.5 text-sm text-left"
+              >
+                <span className={Object.keys(selectedServices).length ? 'text-slate-100' : 'text-slate-600'}>
+                  {Object.keys(selectedServices).length
+                    ? Object.keys(selectedServices).join(', ')
+                    : 'Обери одну чи кілька послуг'}
+                </span>
+                <ChevronDown size={16} className={`shrink-0 text-slate-500 transition-transform ${servicesPickerOpen ? 'rotate-180' : ''}`} />
+              </button>
+
+              {servicesPickerOpen && (
+                <div className="mt-2 space-y-1.5 max-h-48 overflow-y-auto scrollbar-thin pr-1">
+                  {SERVICES.map((service) => {
+                    const checked = service in selectedServices
+                    return (
                       <button
                         type="button"
+                        key={service}
                         onClick={() => toggleService(service)}
                         className={`w-full flex items-center gap-2 rounded-xl border px-3.5 py-2.5 text-sm transition-colors ${
                           checked
@@ -576,9 +594,19 @@ export default function WorkDay() {
                         </span>
                         {service}
                       </button>
+                    )
+                  })}
+                </div>
+              )}
 
-                      {checked && service === CARPET_SERVICE && (
-                        <div className="mt-2 pl-2 border-l-2 border-aqua-400/30 space-y-3">
+              {/* Поля цін для обраних послуг — завжди видно, навіть коли список згорнутий */}
+              {Object.keys(selectedServices).length > 0 && (
+                <div className="mt-3 space-y-3">
+                  {Object.keys(selectedServices).map((service) => (
+                    <div key={service} className="pl-2 border-l-2 border-aqua-400/30">
+                      {service === CARPET_SERVICE ? (
+                        <div className="space-y-3">
+                          <p className="text-xs font-medium text-slate-300">{service}</p>
                           <div className="grid grid-cols-2 gap-3">
                             <Input
                               label="Довжина, м"
@@ -616,26 +644,22 @@ export default function WorkDay() {
                             </p>
                           )}
                         </div>
-                      )}
-
-                      {checked && service !== CARPET_SERVICE && (
-                        <div className="mt-2 pl-2 border-l-2 border-aqua-400/30">
-                          <Input
-                            label={`Ціна за "${service}", ₴`}
-                            type="number"
-                            min="0"
-                            step="0.01"
-                            required
-                            value={selectedServices[service]}
-                            onChange={(e) => handleServicePriceChange(service, e.target.value)}
-                            placeholder="0"
-                          />
-                        </div>
+                      ) : (
+                        <Input
+                          label={`Ціна за "${service}", ₴`}
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          required
+                          value={selectedServices[service]}
+                          onChange={(e) => handleServicePriceChange(service, e.target.value)}
+                          placeholder="0"
+                        />
                       )}
                     </div>
-                  )
-                })}
-              </div>
+                  ))}
+                </div>
+              )}
             </div>
 
             {Object.keys(selectedServices).length > 0 && (
@@ -655,40 +679,57 @@ export default function WorkDay() {
 
             <div>
               <span className="block text-xs font-medium text-slate-400 mb-1.5">
-                Працівники (можна обрати кількох)
+                Працівники
               </span>
               {employees.length === 0 ? (
                 <p className="text-xs text-slate-500">
                   Ще немає жодного працівника — додай у вкладці "Працівники".
                 </p>
               ) : (
-                <div className="space-y-1.5 max-h-40 overflow-y-auto scrollbar-thin pr-1">
-                  {employees.map((emp) => {
-                    const checked = form.employee_ids.includes(emp.id)
-                    return (
-                      <button
-                        type="button"
-                        key={emp.id}
-                        onClick={() => toggleEmployee(emp.id)}
-                        className={`w-full flex items-center justify-between gap-2 rounded-xl border px-3.5 py-2.5 text-sm transition-colors ${
-                          checked
-                            ? 'bg-aqua-400/10 border-aqua-400/40 text-white'
-                            : 'bg-ink-900 border-ink-600 text-slate-300 hover:border-ink-500'
-                        }`}
-                      >
-                        <span className="flex items-center gap-2">
-                          <span className={`w-4 h-4 rounded-md border flex items-center justify-center shrink-0 ${
-                            checked ? 'bg-aqua-400 border-aqua-400' : 'border-ink-500'
-                          }`}>
-                            {checked && <Check size={12} className="text-ink-950" />}
-                          </span>
-                          {emp.name}
-                        </span>
-                        <span className="text-xs text-slate-500">{emp.commission_percent}%</span>
-                      </button>
-                    )
-                  })}
-                </div>
+                <>
+                  <button
+                    type="button"
+                    onClick={() => setEmployeesPickerOpen((v) => !v)}
+                    className="w-full flex items-center justify-between gap-2 bg-ink-900 border border-ink-600 rounded-xl px-3.5 py-2.5 text-sm text-left"
+                  >
+                    <span className={form.employee_ids.length ? 'text-slate-100' : 'text-slate-600'}>
+                      {form.employee_ids.length
+                        ? employees.filter((e) => form.employee_ids.includes(e.id)).map((e) => e.name).join(', ')
+                        : 'Обери одного чи кількох працівників'}
+                    </span>
+                    <ChevronDown size={16} className={`shrink-0 text-slate-500 transition-transform ${employeesPickerOpen ? 'rotate-180' : ''}`} />
+                  </button>
+
+                  {employeesPickerOpen && (
+                    <div className="mt-2 space-y-1.5 max-h-48 overflow-y-auto scrollbar-thin pr-1">
+                      {employees.map((emp) => {
+                        const checked = form.employee_ids.includes(emp.id)
+                        return (
+                          <button
+                            type="button"
+                            key={emp.id}
+                            onClick={() => toggleEmployee(emp.id)}
+                            className={`w-full flex items-center justify-between gap-2 rounded-xl border px-3.5 py-2.5 text-sm transition-colors ${
+                              checked
+                                ? 'bg-aqua-400/10 border-aqua-400/40 text-white'
+                                : 'bg-ink-900 border-ink-600 text-slate-300 hover:border-ink-500'
+                            }`}
+                          >
+                            <span className="flex items-center gap-2">
+                              <span className={`w-4 h-4 rounded-md border flex items-center justify-center shrink-0 ${
+                                checked ? 'bg-aqua-400 border-aqua-400' : 'border-ink-500'
+                              }`}>
+                                {checked && <Check size={12} className="text-ink-950" />}
+                              </span>
+                              {emp.name}
+                            </span>
+                            <span className="text-xs text-slate-500">{emp.commission_percent}%</span>
+                          </button>
+                        )
+                      })}
+                    </div>
+                  )}
+                </>
               )}
               {form.employee_ids.length > 1 && (
                 <p className="text-xs text-slate-500 mt-1.5">
