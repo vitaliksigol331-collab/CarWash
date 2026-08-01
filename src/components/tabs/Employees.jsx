@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react'
-import { Plus, Trash2, Pencil, UserCog, Wallet, Car as CarIcon } from 'lucide-react'
+import { Plus, Trash2, Pencil, UserCog, Wallet, Car as CarIcon, ChevronLeft, ChevronRight } from 'lucide-react'
 import { supabase } from '../../lib/supabaseClient'
 import { useAuth } from '../../context/AuthContext'
 import { POSITIONS } from '../../lib/services'
-import { PERIODS, periodStartDate } from '../../lib/period'
+import { PERIODS, getPeriodRange } from '../../lib/period'
 import {
   PageHeader, Card, StatCard, Button, Input, Select, Modal, Loading, EmptyState, Badge, PeriodSelector,
 } from '../ui'
@@ -203,14 +203,22 @@ export default function Employees() {
 
 function EmployeeDetail({ employee, storeId, onClose }) {
   const [period, setPeriod] = useState('week')
+  const [periodOffset, setPeriodOffset] = useState(0)
   const [loading, setLoading] = useState(true)
   const [entries, setEntries] = useState([])
+
+  const handlePeriodChange = (newPeriod) => {
+    setPeriod(newPeriod)
+    setPeriodOffset(0)
+  }
+
+  const range = getPeriodRange(period, periodOffset)
 
   useEffect(() => {
     let active = true
     async function load() {
       setLoading(true)
-      const from = periodStartDate(period)
+      const { from, to } = range
       let query = supabase
         .from('car_entry_employees')
         .select('*, car_entries(car_brand, body_type, price)')
@@ -218,6 +226,7 @@ function EmployeeDetail({ employee, storeId, onClose }) {
         .eq('employee_id', employee.id)
         .order('entry_date', { ascending: false })
       if (from) query = query.gte('entry_date', from)
+      if (to) query = query.lte('entry_date', to)
       const { data } = await query
       if (!active) return
       setEntries(data ?? [])
@@ -227,7 +236,7 @@ function EmployeeDetail({ employee, storeId, onClose }) {
     return () => {
       active = false
     }
-  }, [period, employee.id, storeId])
+  }, [period, periodOffset, employee.id, storeId])
 
   const totalEarned = entries.reduce((s, e) => s + Number(e.commission_amount || 0), 0)
   const totalRevenue = entries.reduce((s, e) => s + Number(e.car_entries?.price || 0), 0)
@@ -239,9 +248,28 @@ function EmployeeDetail({ employee, storeId, onClose }) {
         <p className="text-xs text-aqua-400 -mt-3 mb-4">{employee.position}</p>
       )}
 
-      <div className="mb-5">
-        <PeriodSelector periods={PERIODS} value={period} onChange={setPeriod} />
+      <div className="mb-3">
+        <PeriodSelector periods={PERIODS} value={period} onChange={handlePeriodChange} />
       </div>
+
+      {period !== 'all' && (
+        <div className="flex items-center justify-between gap-2 mb-5 bg-ink-900 border border-ink-600 rounded-xl px-2 py-1.5">
+          <button
+            onClick={() => setPeriodOffset((o) => o + 1)}
+            className="p-1 rounded-lg text-slate-400 hover:bg-ink-700 hover:text-white shrink-0"
+          >
+            <ChevronLeft size={16} />
+          </button>
+          <span className="text-xs font-medium text-slate-300 text-center truncate">{range.label}</span>
+          <button
+            onClick={() => setPeriodOffset((o) => Math.max(0, o - 1))}
+            disabled={periodOffset === 0}
+            className="p-1 rounded-lg text-slate-400 hover:bg-ink-700 hover:text-white disabled:opacity-30 shrink-0"
+          >
+            <ChevronRight size={16} />
+          </button>
+        </div>
+      )}
 
       <div className="grid grid-cols-1 gap-3 mb-5">
         <StatCard label="Заробив" value={`${totalEarned.toLocaleString('uk-UA')} ₴`} accent="amber" />

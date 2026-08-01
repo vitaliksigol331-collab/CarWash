@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { Loader2 } from 'lucide-react'
+import { Droplets, Loader2 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
 
 export default function Login({ onSwitchToRegister }) {
@@ -77,7 +77,7 @@ export function AuthShell({ title, subtitle, children }) {
       <div className="relative w-full max-w-md">
         <div className="flex items-center gap-2 justify-center mb-8">
           <div className="w-9 h-9 rounded-xl bg-aqua-400/15 flex items-center justify-center">
-            <img src="/logo.svg" alt="" className="w-6 h-6" />
+            <Droplets size={18} className="text-aqua-400" />
           </div>
           <span className="font-display font-extrabold text-lg tracking-tight text-white">
             Aqua<span className="text-aqua-400">Board</span>

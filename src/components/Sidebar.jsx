@@ -6,6 +6,7 @@ import {
   UserCog,
   CalendarClock,
   Wallet2,
+  Droplets,
   LogOut,
 } from 'lucide-react'
 import { useAuth } from '../context/AuthContext'
@@ -27,7 +28,7 @@ export default function Sidebar({ active, onChange, mobileOpen, onCloseMobile })
     <div className="h-full flex flex-col bg-ink-900 border-r border-ink-700">
       <div className="px-5 py-6 flex items-center gap-2 border-b border-ink-700">
         <div className="w-9 h-9 rounded-xl bg-aqua-400/15 flex items-center justify-center shrink-0">
-          <img src="/logo.svg" alt="" className="w-6 h-6" />
+          <Droplets size={18} className="text-aqua-400" />
         </div>
         <div className="min-w-0">
           <p className="font-display font-extrabold text-white leading-tight truncate">

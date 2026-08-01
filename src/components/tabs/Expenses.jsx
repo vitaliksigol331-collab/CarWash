@@ -1,9 +1,9 @@
 import { useEffect, useMemo, useState } from 'react'
-import { Plus, Trash2, Wallet2 } from 'lucide-react'
+import { Plus, Trash2, Wallet2, ChevronLeft, ChevronRight } from 'lucide-react'
 import { supabase } from '../../lib/supabaseClient'
 import { useAuth } from '../../context/AuthContext'
 import { EXPENSE_CATEGORIES } from '../../lib/services'
-import { PERIODS, periodStartDate } from '../../lib/period'
+import { PERIODS, getPeriodRange } from '../../lib/period'
 import {
   PageHeader, Card, StatCard, Button, Input, Select, Textarea, Modal,
   Loading, EmptyState, Badge, PeriodSelector,
@@ -24,21 +24,30 @@ const emptyForm = {
 export default function Expenses() {
   const { storeId } = useAuth()
   const [period, setPeriod] = useState('month')
+  const [periodOffset, setPeriodOffset] = useState(0)
   const [entries, setEntries] = useState([])
   const [loading, setLoading] = useState(true)
   const [modalOpen, setModalOpen] = useState(false)
   const [form, setForm] = useState(emptyForm)
   const [saving, setSaving] = useState(false)
 
+  const handlePeriodChange = (newPeriod) => {
+    setPeriod(newPeriod)
+    setPeriodOffset(0)
+  }
+
+  const range = getPeriodRange(period, periodOffset)
+
   async function load() {
     setLoading(true)
-    const from = periodStartDate(period)
+    const { from, to } = range
     let query = supabase
       .from('expense_entries')
       .select('*')
       .eq('store_id', storeId)
       .order('expense_date', { ascending: false })
     if (from) query = query.gte('expense_date', from)
+    if (to) query = query.lte('expense_date', to)
     const { data, error } = await query
     if (!error) setEntries(data ?? [])
     setLoading(false)
@@ -47,7 +56,7 @@ export default function Expenses() {
   useEffect(() => {
     if (storeId) load()
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [storeId, period])
+  }, [storeId, period, periodOffset])
 
   const total = useMemo(() => entries.reduce((s, e) => s + Number(e.amount || 0), 0), [entries])
 
@@ -104,9 +113,28 @@ export default function Expenses() {
         }
       />
 
-      <div className="flex flex-wrap items-center justify-between gap-3 mb-6">
-        <PeriodSelector periods={PERIODS} value={period} onChange={setPeriod} />
+      <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+        <PeriodSelector periods={PERIODS} value={period} onChange={handlePeriodChange} />
       </div>
+
+      {period !== 'all' && (
+        <Card className="flex items-center justify-between gap-2 mb-6 py-2.5">
+          <button
+            onClick={() => setPeriodOffset((o) => o + 1)}
+            className="p-1.5 rounded-lg text-slate-400 hover:bg-ink-700 hover:text-white shrink-0"
+          >
+            <ChevronLeft size={18} />
+          </button>
+          <span className="text-sm font-medium text-slate-200 text-center truncate">{range.label}</span>
+          <button
+            onClick={() => setPeriodOffset((o) => Math.max(0, o - 1))}
+            disabled={periodOffset === 0}
+            className="p-1.5 rounded-lg text-slate-400 hover:bg-ink-700 hover:text-white disabled:opacity-30 shrink-0"
+          >
+            <ChevronRight size={18} />
+          </button>
+        </Card>
+      )}
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <StatCard label="Всього витрачено" value={`${total.toLocaleString('uk-UA')} ₴`} accent="coral" />

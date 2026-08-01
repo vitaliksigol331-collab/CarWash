@@ -2,10 +2,10 @@ import { useEffect, useState } from 'react'
 import {
   AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
 } from 'recharts'
-import { Wallet, TrendingUp, PackageX, Target } from 'lucide-react'
+import { Wallet, TrendingUp, PackageX, Target, ChevronLeft, ChevronRight } from 'lucide-react'
 import { supabase } from '../../lib/supabaseClient'
 import { useAuth } from '../../context/AuthContext'
-import { PERIODS, periodStartDate } from '../../lib/period'
+import { PERIODS, getPeriodRange } from '../../lib/period'
 import { PageHeader, StatCard, Card, Button, Input, Modal, Loading, EmptyState, PeriodSelector } from '../ui'
 
 const todayISO = () => new Date().toISOString().slice(0, 10)
@@ -13,6 +13,7 @@ const todayISO = () => new Date().toISOString().slice(0, 10)
 export default function Overview({ onNavigate }) {
   const { storeId } = useAuth()
   const [period, setPeriod] = useState('month')
+  const [periodOffset, setPeriodOffset] = useState(0)
   const [loading, setLoading] = useState(true)
   const [chartRows, setChartRows] = useState([])
   const [stats, setStats] = useState({ revenue: 0, cars: 0, commissions: 0, expenses: 0 })
@@ -23,31 +24,41 @@ export default function Overview({ onNavigate }) {
   const [todayCars, setTodayCars] = useState(0)
   const [goalModalOpen, setGoalModalOpen] = useState(false)
 
+  const handlePeriodChange = (newPeriod) => {
+    setPeriod(newPeriod)
+    setPeriodOffset(0)
+  }
+
+  const range = getPeriodRange(period, periodOffset)
+
   useEffect(() => {
     if (!storeId) return
     let active = true
 
     async function load() {
       setLoading(true)
-      const from = periodStartDate(period)
+      const { from, to } = range
 
       let carsQuery = supabase
         .from('car_entries')
         .select('price, entry_date')
         .eq('store_id', storeId)
       if (from) carsQuery = carsQuery.gte('entry_date', from)
+      if (to) carsQuery = carsQuery.lte('entry_date', to)
 
       let commissionsQuery = supabase
         .from('car_entry_employees')
         .select('commission_amount, entry_date')
         .eq('store_id', storeId)
       if (from) commissionsQuery = commissionsQuery.gte('entry_date', from)
+      if (to) commissionsQuery = commissionsQuery.lte('entry_date', to)
 
       let expensesQuery = supabase
         .from('expense_entries')
         .select('amount')
         .eq('store_id', storeId)
       if (from) expensesQuery = expensesQuery.gte('expense_date', from)
+      if (to) expensesQuery = expensesQuery.lte('expense_date', to)
 
       const [
         { data: cars },
@@ -91,7 +102,7 @@ export default function Overview({ onNavigate }) {
     return () => {
       active = false
     }
-  }, [storeId, period])
+  }, [storeId, period, periodOffset])
 
   async function loadGoalProgress() {
     const [{ data: store }, { data: todayEntries }] = await Promise.all([
@@ -122,8 +133,27 @@ export default function Overview({ onNavigate }) {
       <PageHeader
         title="Огляд"
         subtitle="Статистика твого робочого простору за обраний період"
-        action={<PeriodSelector periods={PERIODS} value={period} onChange={setPeriod} />}
+        action={<PeriodSelector periods={PERIODS} value={period} onChange={handlePeriodChange} />}
       />
+
+      {period !== 'all' && (
+        <Card className="flex items-center justify-between gap-2 mb-4 py-2.5">
+          <button
+            onClick={() => setPeriodOffset((o) => o + 1)}
+            className="p-1.5 rounded-lg text-slate-400 hover:bg-ink-700 hover:text-white shrink-0"
+          >
+            <ChevronLeft size={18} />
+          </button>
+          <span className="text-sm font-medium text-slate-200 text-center truncate">{range.label}</span>
+          <button
+            onClick={() => setPeriodOffset((o) => Math.max(0, o - 1))}
+            disabled={periodOffset === 0}
+            className="p-1.5 rounded-lg text-slate-400 hover:bg-ink-700 hover:text-white disabled:opacity-30 shrink-0"
+          >
+            <ChevronRight size={18} />
+          </button>
+        </Card>
+      )}
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-4">
         <StatCard label="Дохід" value={`${stats.revenue.toLocaleString('uk-UA')} ₴`} accent="foam" hint="Сума за обраний період" />
