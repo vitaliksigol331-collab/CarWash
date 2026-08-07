@@ -5,6 +5,7 @@ import Overview from '../components/tabs/Overview'
 import WorkDay from '../components/tabs/WorkDay'
 import Employees from '../components/tabs/Employees'
 import Expenses from '../components/tabs/Expenses'
+import Cashbox from '../components/tabs/Cashbox'
 import Warehouse from '../components/tabs/Warehouse'
 import Clients from '../components/tabs/Clients'
 import Booking from '../components/tabs/Booking'
@@ -14,6 +15,7 @@ const VIEWS = {
   workday: WorkDay,
   employees: Employees,
   expenses: Expenses,
+  cashbox: Cashbox,
   warehouse: Warehouse,
   clients: Clients,
   booking: Booking,

@@ -6,6 +6,7 @@ import {
   UserCog,
   CalendarClock,
   Wallet2,
+  Wallet,
   Droplets,
   LogOut,
 } from 'lucide-react'
@@ -16,6 +17,7 @@ export const TABS = [
   { key: 'workday', label: 'Робочий день', icon: Sun },
   { key: 'employees', label: 'Працівники', icon: UserCog },
   { key: 'expenses', label: 'Витрати', icon: Wallet2 },
+  { key: 'cashbox', label: 'Каса', icon: Wallet },
   { key: 'warehouse', label: 'Склад', icon: Boxes },
   { key: 'clients', label: 'Клієнти', icon: Users },
   { key: 'booking', label: 'Запис', icon: CalendarClock },
